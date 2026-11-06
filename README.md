@@ -4,7 +4,15 @@ A small Playwright + TypeScript test framework that reports to
 [Qaily](https://github.com/qaily/qaily-playwright-html-reporter): run history, weekly and monthly dashboards, failures
 grouped by cause, a coverage heat map, and screenshots and traces stored in S3.
 
-**[Report on GitHub Pages](https://qaily.github.io/qaily-playwright-ts-framework/)**, rebuilt after every run on `main`.
+The report is published in two ways, so they can be compared on the same runs:
+
+| Report | Approach | What needs a key |
+|---|---|---|
+| **[Website](https://qaily.github.io/qaily-playwright-ts-framework/)** | Dashboard data is deployed with the site after every run; screenshots and traces come from S3 | Screenshots and traces |
+| **[Bucket](https://qaily.github.io/qaily-playwright-ts-framework/bucket/)** | The site holds only the report app; all data comes from S3, so new runs show without redeploying | Everything |
+
+The report's header says which one you are looking at (*Website data · S3 files* or *Bucket data*); hover it for
+details. The Bucket report exists once S3 is connected (see [Connect S3](#connect-s3)).
 
 The tests run against **Taskboard**, a tiny to-do app in [`demo-app/`](demo-app/), so the project needs no outside
 services.
@@ -61,14 +69,22 @@ Every test records a screenshot and a trace, so the report always has something 
 ## How the report is published
 
 [`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs on every push to `main`, on weekdays at 06:00 UTC and
-on demand:
+on demand. Its steps are marked **[BOTH]**, **[WEBSITE]** or **[BUCKET]**, by the approach they serve.
 
-1. **test:** runs the tests and uploads the run folder to S3, with a `.sync-complete` marker last.
-2. **report:** downloads every run from the bucket (without attachments), builds the report data and deploys it to
-   GitHub Pages with the report app.
+1. **test:** runs the tests and uploads the run folder to S3, with a `.sync-complete` marker last. [BOTH]
+2. **report:**
+   - pulls the report data published last time, so only changed months are rebuilt [BUCKET];
+   - downloads every run from the bucket (without attachments) and builds the report data [BOTH];
+   - publishes the report data to S3, `catalog.json` last [BUCKET];
+   - deploys GitHub Pages: the Website report at the root with all its data, and the Bucket report under `/bucket/`
+     with only the app and `data/settings.json` [BOTH].
 
-Without S3 settings both jobs still work: the report then shows only the latest run, and its screenshots and traces
-are published with the site.
+**Update without redeploying:** Actions → Tests and report → Run workflow, untick **Deploy the site**. The tests run
+and the data is published to S3, but GitHub Pages isn't touched: the Bucket report shows the new run, the Website
+report keeps its old data. Scheduled runs and pushes always deploy.
+
+Without S3 settings both jobs still work, and only the Website report is built: it shows the latest run, with its
+screenshots and traces published on the site.
 
 ## Connect S3
 
@@ -83,9 +99,10 @@ The bucket is configured in GitHub, not in the code. Anything in the repository 
    | `S3_REGION` | `eu-north-1`, or `auto` for Google Cloud Storage | Default `eu-north-1` |
    | `S3_PREFIX` | `qaily-playwright-ts-framework/jsonl-report` | The default |
    | `S3_ENDPOINT` | `https://storage.googleapis.com` | Only for S3-compatible storage |
+   | `S3_DATA_PREFIX` | `qaily-playwright-ts-framework/qaily-data` | The default; where the Bucket report's data goes. Must be outside `S3_PREFIX` |
 
 2. **Repository secrets:** `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`, for a key that can list, read and write
-   under the prefix (AWS: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`; Google Cloud Storage: an HMAC key of a
+   under both prefixes (AWS: `s3:ListBucket`, `s3:GetObject`, `s3:PutObject`; Google Cloud Storage: an HMAC key of a
    service account). Use a key for this project only.
 
 3. **Bucket CORS**, so the report and the Playwright trace viewer can read objects from the browser. Allow `GET` and
@@ -97,8 +114,9 @@ The bucket is configured in GitHub, not in the code. Anything in the repository 
 
 ### Viewing screenshots and traces
 
-The dashboards are public, but attachments stay in the private bucket. To see them, open the report, go to
-**Settings → Tokens → AWS credentials** and paste a **read-only** key (`s3:GetObject` on the prefix), for example:
+On the Website report the dashboards are public, but attachments stay in the private bucket. The Bucket report shows
+nothing until you connect. In either, go to **Settings → Tokens → AWS credentials** and paste a **read-only** key
+(`s3:GetObject` on both prefixes), for example:
 
 ```bash
 aws configure export-credentials --profile <read-only profile> --format process

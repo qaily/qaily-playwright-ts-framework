@@ -1,8 +1,21 @@
-# Runs the tests, uploads each run to S3, and publishes the Qaily report to GitHub Pages.
+# Runs the tests, uploads each run to S3, and publishes the Qaily report in two ways, so they can be compared:
 #
-# Without S3 settings it still works: the report then shows only the latest run, with its screenshots and traces on
-# the site. With S3 (see README → "Connect S3"), every run is kept in the bucket, the report shows the whole history,
-# and screenshots and traces stay in the bucket: viewers paste read-only credentials to see them.
+#   WEBSITE approach  https://qaily.github.io/qaily-playwright-ts-framework/
+#                     Dashboard data is deployed with the site after every run. Only screenshots, traces and other
+#                     attachments come from S3. Dashboards need no key; attachments do.
+#
+#   BUCKET approach   https://qaily.github.io/qaily-playwright-ts-framework/bucket/
+#                     The site holds only the report app and data/settings.json. Everything else (dashboard data
+#                     and attachments) is published to S3 and read from there with signed links, so new data shows
+#                     without redeploying the site. Every viewer needs a key.
+#
+# Steps marked [BOTH] serve both approaches, [WEBSITE] or [BUCKET] only one.
+#
+# Without S3 settings (see README → "Connect S3") only the website copy is built: it shows the latest run, with its
+# attachments published on the site.
+#
+# Run it by hand with "Deploy the site" unticked to update the data without redeploying GitHub Pages: the bucket copy
+# then shows the new run, the website copy keeps the old data.
 name: Tests and report
 
 on:
@@ -12,6 +25,11 @@ on:
   schedule:
     - cron: '0 6 * * 1-5' # weekdays, so the dashboards have history
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy the site to GitHub Pages (untick to update only the bucket data)'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -21,6 +39,7 @@ env:
   S3_REGION: ${{ vars.S3_REGION }}
   S3_PREFIX: ${{ vars.S3_PREFIX }}
   S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+  S3_DATA_PREFIX: ${{ vars.S3_DATA_PREFIX }}
 
 jobs:
   test:
@@ -37,9 +56,10 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
 
-      # The .sync-complete marker goes last: the report skips run folders without it, so a half-uploaded run never
-      # shows up. Pull requests don't upload (forks have no access to the secrets).
-      - name: Upload the run to S3
+      # [BOTH] Raw run folder (JSONL + attachments) to S3. The .sync-complete marker goes last: the report skips run
+      # folders without it, so a half-uploaded run never shows up. Pull requests don't upload (forks have no access
+      # to the secrets).
+      - name: '[BOTH] Upload the run to S3'
         if: always() && env.S3_BUCKET != '' && github.event_name != 'pull_request'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
@@ -56,6 +76,7 @@ jobs:
             echo "Uploaded $run"
           done
 
+      # [WEBSITE, no bucket] The report job builds from this when there is no bucket.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,6 +98,11 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      # Scheduled and push runs always deploy; a manual run deploys unless "Deploy the site" is unticked.
+      DEPLOY: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,45 +113,68 @@ jobs:
 
       - run: npm ci
 
-      - name: Report settings (lanes, and the bucket from repository variables)
-        run: node scripts/report-settings.mjs report-data
+      - name: '[BOTH] Report settings: lanes, and the bucket from repository variables'
+        run: node scripts/report-settings.mjs report-data website
 
-      - name: Build from the bucket (all runs, without attachments)
+      # [BUCKET] What was published last time, so the build below only rebuilds months that changed.
+      - name: '[BUCKET] Pull the published report data'
         if: env.S3_BUCKET != ''
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: npx qaily-report pull --out report-data
+
+      # [BOTH] Every run folder from the bucket (without attachments), then the dashboard data (rollups).
+      - name: '[BOTH] Build from the bucket (all runs)'
+        if: env.S3_BUCKET != ''
         run: npx qaily-report sync --to runs --out report-data
 
-      - name: Get this run (no bucket)
+      - name: '[WEBSITE, no bucket] Get this run'
         if: env.S3_BUCKET == ''
         uses: actions/download-artifact@v4
         with:
           name: run
           path: runs
 
-      - name: Build from this run (no bucket)
+      - name: '[WEBSITE, no bucket] Build from this run'
         if: env.S3_BUCKET == ''
         run: npx qaily-report build --in runs --out report-data
 
-      - name: Planned coverage matrix for the heat map
+      - name: '[BOTH] Planned coverage matrix for the heat map'
         run: npx qaily-report catalog --csv coverage/matrix.csv --out report-data/coverage-catalog.json
 
-      - name: Assemble the site
+      # [BUCKET] Dashboard data to S3, catalog.json last. From here on the bucket copy shows the new run,
+      # whether or not the site is deployed below.
+      - name: '[BUCKET] Publish the report data to S3'
+        if: env.S3_BUCKET != ''
+        run: npx qaily-report publish --out report-data
+
+      - name: '[BOTH] Assemble the site'
+        if: env.DEPLOY == 'true'
         run: |
+          # [WEBSITE] copy at the site root: the report app plus all dashboard data.
           cp -r node_modules/@qaily/playwright-html-reporter/app site
           cp -r report-data site/data
-          # Without a bucket, screenshots and traces are published with the site.
           if [ -z "$S3_BUCKET" ]; then
+            # No bucket: screenshots and traces are published with the site.
             for dir in runs/*/; do
               run=$(basename "$dir")
               if [ -d "$dir/attachments" ]; then mkdir -p "site/data/runs/$run" && cp -r "$dir/attachments" "site/data/runs/$run/"; fi
             done
+          else
+            # [BUCKET] copy under /bucket/: the report app and settings.json only; it reads everything else from S3.
+            cp -r node_modules/@qaily/playwright-html-reporter/app site/bucket
+            node scripts/report-settings.mjs site/bucket/data bucket
           fi
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - name: '[BOTH] Deploy to GitHub Pages'
+        if: env.DEPLOY == 'true'
+        uses: actions/configure-pages@v5
+      - if: env.DEPLOY == 'true'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deployment
+        if: env.DEPLOY == 'true'
         uses: actions/deploy-pages@v4
+
+      - name: Skipped the site deploy
+        if: env.DEPLOY != 'true'
+        run: echo "Not deployed. The bucket copy (/bucket/) shows the new data; the website copy keeps what it had."
