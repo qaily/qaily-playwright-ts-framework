@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Taskboard</title>
+  <style>
+    :root { --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --accent: #3b5bdb; --danger: #c92a2a; --line: #e4e7ec; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 24px; background: var(--card); border-bottom: 1px solid var(--line); }
+    header h1 { margin: 0; font-size: 18px; }
+    main { max-width: 640px; margin: 32px auto; padding: 0 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+    label { display: block; font-weight: 600; margin: 12px 0 4px; }
+    input[type=text] { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+    button { padding: 8px 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; font: inherit; cursor: pointer; }
+    button.secondary { background: transparent; color: var(--accent); }
+    button.danger { background: transparent; color: var(--danger); border-color: transparent; }
+    button[aria-pressed=true] { background: var(--accent); color: #fff; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .error { color: var(--danger); margin-top: 8px; }
+    ul { list-style: none; margin: 16px 0 0; padding: 0; }
+    li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+    li .title { flex: 1; }
+    li.done .title { text-decoration: line-through; color: var(--muted); }
+    .muted { color: var(--muted); }
+    .filters { display: flex; gap: 6px; margin-top: 12px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Taskboard</h1>
+    <div class="row" id="user-bar" hidden>
+      <span id="greeting"></span>
+      <button class="secondary" id="sign-out">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Sign in -->
+    <section class="card" id="sign-in" aria-labelledby="sign-in-title">
+      <h2 id="sign-in-title">Sign in</h2>
+      <p class="muted">Demo workspace code: 2468</p>
+      <form id="sign-in-form">
+        <label for="name">Your name</label>
+        <input type="text" id="name" autocomplete="off" />
+        <label for="code">Workspace code</label>
+        <input type="text" id="code" inputmode="numeric" autocomplete="off" />
+        <p class="error" id="sign-in-error" role="alert" hidden></p>
+        <p><button type="submit">Sign in</button></p>
+      </form>
+    </section>
+
+    <!-- Tasks -->
+    <section class="card" id="tasks" aria-labelledby="tasks-title" hidden>
+      <h2 id="tasks-title">Tasks</h2>
+      <form class="row" id="new-task-form">
+        <input type="text" id="new-task" aria-label="New task" placeholder="What needs doing?" autocomplete="off" />
+        <button type="submit">Add</button>
+      </form>
+      <div class="filters" role="group" aria-label="Filter tasks">
+        <button class="secondary" data-filter="all" aria-pressed="true">All</button>
+        <button class="secondary" data-filter="active" aria-pressed="false">Active</button>
+        <button class="secondary" data-filter="done" aria-pressed="false">Done</button>
+      </div>
+      <p class="muted" id="empty">No tasks yet</p>
+      <ul id="task-list" aria-label="Task list"></ul>
+      <p class="muted" id="counter" aria-live="polite"></p>
+    </section>
+
+    <!-- Activity -->
+    <section class="card" id="activity" aria-labelledby="activity-title" hidden>
+      <h2 id="activity-title">Activity</h2>
+      <button class="secondary" id="load-activity">Load activity</button>
+      <p class="muted" id="activity-status" hidden>Loading…</p>
+      <ul id="activity-list" aria-label="Activity list" hidden></ul>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const state = { user: null, tasks: [], filter: 'all', nextId: 1, log: [] };
+    const params = new URLSearchParams(location.search);
+
+    // ?latency=random makes "Load activity" take 0.2–2.6 s, like a slow backend. Used by one test to show a flaky result.
+    const activityDelay = () => (params.get('latency') === 'random' ? 200 + Math.random() * 2400 : 300);
+
+    function log(text) {
+      state.log.unshift(`${new Date().toLocaleTimeString()} · ${text}`);
+    }
+
+    function render() {
+      const signedIn = !!state.user;
+      $('sign-in').hidden = signedIn;
+      $('tasks').hidden = !signedIn;
+      $('activity').hidden = !signedIn;
+      $('user-bar').hidden = !signedIn;
+      if (!signedIn) return;
+      $('greeting').textContent = `Hello, ${state.user}`;
+
+      const visible = state.tasks.filter((t) => state.filter === 'all' || (state.filter === 'done') === t.done);
+      const list = $('task-list');
+      list.replaceChildren(
+        ...visible.map((t) => {
+          const li = document.createElement('li');
+          li.className = t.done ? 'done' : '';
+          li.dataset.id = String(t.id);
+          const box = document.createElement('input');
+          box.type = 'checkbox';
+          box.checked = t.done;
+          box.setAttribute('aria-label', `Complete ${t.title}`);
+          box.addEventListener('change', () => {
+            t.done = box.checked;
+            log(`${t.done ? 'Completed' : 'Reopened'} "${t.title}"`);
+            render();
+          });
+          const title = document.createElement('span');
+          title.className = 'title';
+          title.textContent = t.title;
+          const del = document.createElement('button');
+          del.className = 'danger';
+          del.textContent = 'Delete';
+          del.setAttribute('aria-label', `Delete ${t.title}`);
+          del.addEventListener('click', () => {
+            state.tasks = state.tasks.filter((x) => x !== t);
+            log(`Deleted "${t.title}"`);
+            render();
+          });
+          li.append(box, title, del);
+          return li;
+        }),
+      );
+      $('empty').hidden = state.tasks.length > 0;
+      const left = state.tasks.filter((t) => !t.done).length;
+      $('counter').textContent = state.tasks.length ? `${left} ${left === 1 ? 'task' : 'tasks'} left` : '';
+      document.querySelectorAll('[data-filter]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter)));
+    }
+
+    $('sign-in-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = $('name').value.trim();
+      const code = $('code').value.trim();
+      const error = $('sign-in-error');
+      if (!name) error.textContent = 'Enter your name';
+      else if (code !== '2468') error.textContent = 'Wrong workspace code';
+      else {
+        error.hidden = true;
+        state.user = name;
+        log(`${name} signed in`);
+        render();
+        return;
+      }
+      error.hidden = false;
+    });
+
+    $('sign-out').addEventListener('click', () => {
+      state.user = null;
+      $('name').value = '';
+      $('code').value = '';
+      render();
+    });
+
+    $('new-task-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const title = $('new-task').value.trim();
+      if (!title) return;
+      state.tasks.push({ id: state.nextId++, title, done: false });
+      log(`Added "${title}"`);
+      $('new-task').value = '';
+      render();
+    });
+
+    document.querySelectorAll('[data-filter]').forEach((b) =>
+      b.addEventListener('click', () => {
+        state.filter = b.dataset.filter;
+        render();
+      }),
+    );
+
+    $('load-activity').addEventListener('click', () => {
+      $('activity-status').hidden = false;
+      $('activity-list').hidden = true;
+      setTimeout(() => {
+        $('activity-status').hidden = true;
+        const list = $('activity-list');
+        list.replaceChildren(...state.log.map((text) => Object.assign(document.createElement('li'), { textContent: text })));
+        list.hidden = false;
+      }, activityDelay());
+    });
+
+    render();
+  </script>
+</body>
+</html>

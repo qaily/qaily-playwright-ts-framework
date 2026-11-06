@@ -1,0 +1,131 @@
+# Runs the tests, uploads each run to S3, and publishes the Qaily report to GitHub Pages.
+#
+# Without S3 settings it still works: the report then shows only the latest run, with its screenshots and traces on
+# the site. With S3 (see README → "Connect S3"), every run is kept in the bucket, the report shows the whole history,
+# and screenshots and traces stay in the bucket: viewers paste read-only credentials to see them.
+name: Tests and report
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1-5' # weekdays, so the dashboards have history
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  S3_BUCKET: ${{ vars.S3_BUCKET }}
+  S3_REGION: ${{ vars.S3_REGION }}
+  S3_PREFIX: ${{ vars.S3_PREFIX }}
+  S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+
+      # The .sync-complete marker goes last: the report skips run folders without it, so a half-uploaded run never
+      # shows up. Pull requests don't upload (forks have no access to the secrets).
+      - name: Upload the run to S3
+        if: always() && env.S3_BUCKET != '' && github.event_name != 'pull_request'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_CHECKSUM_CALCULATION: when_required # needed for Google Cloud Storage, harmless elsewhere
+        run: |
+          prefix="${S3_PREFIX:-qaily-playwright-ts-framework/jsonl-report}"
+          args=(--region "${S3_REGION:-eu-north-1}" --only-show-errors)
+          if [ -n "$S3_ENDPOINT" ]; then args+=(--endpoint-url "$S3_ENDPOINT"); fi
+          for dir in reports/data/*/; do
+            run=$(basename "$dir")
+            aws s3 sync "$dir" "s3://$S3_BUCKET/$prefix/$run" "${args[@]}"
+            echo '{"complete":true}' | aws s3 cp - "s3://$S3_BUCKET/$prefix/$run/.sync-complete" "${args[@]}"
+            echo "Uploaded $run"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run
+          path: reports/data
+          retention-days: 14
+
+  report:
+    needs: test
+    if: always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Report settings (lanes, and the bucket from repository variables)
+        run: node scripts/report-settings.mjs report-data
+
+      - name: Build from the bucket (all runs, without attachments)
+        if: env.S3_BUCKET != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: npx qaily-report sync --to runs --out report-data
+
+      - name: Get this run (no bucket)
+        if: env.S3_BUCKET == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: run
+          path: runs
+
+      - name: Build from this run (no bucket)
+        if: env.S3_BUCKET == ''
+        run: npx qaily-report build --in runs --out report-data
+
+      - name: Planned coverage matrix for the heat map
+        run: npx qaily-report catalog --csv coverage/matrix.csv --out report-data/coverage-catalog.json
+
+      - name: Assemble the site
+        run: |
+          cp -r node_modules/@qaily/playwright-html-reporter/app site
+          cp -r report-data site/data
+          # Without a bucket, screenshots and traces are published with the site.
+          if [ -z "$S3_BUCKET" ]; then
+            for dir in runs/*/; do
+              run=$(basename "$dir")
+              if [ -d "$dir/attachments" ]; then mkdir -p "site/data/runs/$run" && cp -r "$dir/attachments" "site/data/runs/$run/"; fi
+            done
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

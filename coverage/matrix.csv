@@ -1,0 +1,26 @@
+Component,Scenario,Feature,Area
+Taskboard,Sign in,Authentication,Open app
+,,,Sign in
+,,,Validation
+,,,Sign out
+,,,Remember me
+Taskboard,Task lifecycle,Authentication,Open app
+,,,Sign in
+,,Tasks,Create
+,,,Complete
+,,,Delete
+,,,Counter
+,,,Edit
+Taskboard,Filters,Authentication,Open app
+,,,Sign in
+,,Tasks,Create
+,,,Complete
+,,Filters,Active
+,,,Done
+,,,All
+Taskboard,Activity,Authentication,Open app
+,,,Sign in
+,,Tasks,Create
+,,,Complete
+,,Activity,Load
+,,,Export

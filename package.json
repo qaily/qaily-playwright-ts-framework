@@ -1,0 +1,27 @@
+{
+  "name": "qaily-playwright-ts-framework",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sample Playwright + TypeScript test framework that reports to Qaily: run history, dashboards and screenshots from S3.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qaily/qaily-playwright-ts-framework.git"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "app": "node scripts/serve-demo-app.mjs",
+    "report": "node scripts/report-settings.mjs report-data && qaily-report build --in reports/data --out report-data && qaily-report catalog --csv coverage/matrix.csv --out report-data/coverage-catalog.json",
+    "report:serve": "qaily-report serve --data report-data --attachments reports/data",
+    "typecheck": "tsc"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@qaily/playwright-html-reporter": "github:qaily/qaily-playwright-html-reporter",
+    "@types/node": "^22.20.5",
+    "typescript": "~5.9.3"
+  }
+}
