@@ -124,6 +124,20 @@ aws configure export-credentials --profile <read-only profile> --format process
 
 The report signs short-lived links in your browser; the key is kept in that tab only unless you choose otherwise.
 
+### Team settings and other datasets (Bucket report)
+
+The Bucket report also takes its team settings (lanes, thresholds, heat map rules) from the bucket: `team-settings.json`
+in the data folder. The workflow's `publish` step creates it from `scripts/report-settings.mjs` the first time and then
+leaves it alone. To change it, open Settings → **For the team** and press **Save for team**. That needs a key that can
+write to the data folder, and `PUT` in the bucket's CORS rules
+([details](https://github.com/qaily/qaily-playwright-html-reporter/blob/main/docs/s3-artifacts.md#team-settings-in-the-bucket)).
+
+To look at another dataset without touching the site, change the location under Settings → **For me**, then reload:
+**Report data key prefix** and **S3 key prefix** for another folder in the same bucket, or also **S3 bucket**, **S3 region**,
+**S3 endpoint** (empty for AWS) and **Bucket in the URL path** for another bucket. Another bucket needs your credentials for it
+and CORS rules for this site. The header shows where you are looking, and **Reset** takes you back. This only changes your
+own browser ([details](https://github.com/qaily/qaily-playwright-html-reporter/blob/main/docs/s3-artifacts.md#looking-at-another-bucket-or-data-folder)).
+
 ## License
 
 MIT
