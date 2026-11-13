@@ -152,6 +152,9 @@ jobs:
           # [WEBSITE] copy at the site root: the report app plus all dashboard data.
           cp -r node_modules/@qaily/playwright-html-reporter/app site
           cp -r report-data site/data
+          # Playwright's trace viewer, from this project's Playwright: the report hands it each trace, so traces open
+          # without CORS rules for it (settings.json: connections.traceViewer = trace/).
+          npx qaily-report trace-viewer --out site/trace
           if [ -z "$S3_BUCKET" ]; then
             # No bucket: screenshots and traces are published with the site.
             for dir in runs/*/; do
@@ -161,6 +164,7 @@ jobs:
           else
             # [BUCKET] copy under /bucket/: the report app and settings.json only; it reads everything else from S3.
             cp -r node_modules/@qaily/playwright-html-reporter/app site/bucket
+            cp -r site/trace site/bucket/trace
             node scripts/report-settings.mjs site/bucket/data bucket
           fi
 

@@ -27,11 +27,14 @@ const settings = {
     { id: 'main', label: 'Main branch', match: { branch: '^main$' } },
     { id: 'branches', label: 'Other branches', match: {} },
   ],
+  // The trace viewer CI copies next to the report (qaily-report trace-viewer); traces open there without CORS.
+  connections: { traceViewer: 'trace/' },
 };
 
 const bucket = env('S3_BUCKET');
 if (bucket) {
   settings.connections = {
+    ...settings.connections,
     s3: {
       bucket,
       region: env('S3_REGION', 'eu-north-1'),

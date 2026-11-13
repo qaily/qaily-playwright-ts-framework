@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
-    "@qaily/playwright-html-reporter": "^1.0.1-beta.1",
+    "@qaily/playwright-html-reporter": "^1.0.1-beta.2",
     "@types/node": "^22.20.5",
     "typescript": "~5.9.3"
   }
